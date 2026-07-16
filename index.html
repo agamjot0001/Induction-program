@@ -3,13 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Advanced Hand Tracking AR</title>
+    <title>AJ QUADGLOW</title>
 
     <!-- MediaPipe Hands CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+    <!-- Display font for branding -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
 
     <!-- External stylesheet -->
     <link rel="stylesheet" href="style.css">
@@ -18,9 +23,34 @@
 
     <!-- Start Overlay (Required for AudioContext initialization) -->
     <div id="startOverlay">
-        <h1 style="margin-bottom: 20px; font-weight: 300; letter-spacing: 4px;">AJ_quadglow</h1>
-        <p style="margin-bottom: 40px; color: #888;">Grant camera permissions and click to start audio/visual experience</p>
-        <button class="start-btn" id="startBtn">Enter Experience</button>
+        <div class="start-backdrop" aria-hidden="true"></div>
+        <div class="quad-glow" aria-hidden="true"></div>
+
+        <div class="start-content">
+            <span class="eyebrow"><i></i>Hand-Tracked Light Art<i></i></span>
+            <h1 class="brand-title">AJ QUADGLOW</h1>
+            <p class="brand-sub">Two hands. Four points. A shape of shifting color.</p>
+
+            <div class="how-it-works">
+                <div class="step">
+                    <span class="step-num">01</span>
+                    <p class="step-text">Allow camera access and hold both hands up in frame</p>
+                </div>
+                <div class="step-divider"></div>
+                <div class="step">
+                    <span class="step-num">02</span>
+                    <p class="step-text">Only fingers you hold open are tracked — close a finger and it disappears from the sensor</p>
+                </div>
+                <div class="step-divider"></div>
+                <div class="step">
+                    <span class="step-num">03</span>
+                    <p class="step-text">Every open fingertip links into one glowing, frosted-glass shape that shifts color live</p>
+                </div>
+            </div>
+
+            <p class="brand-note">Pinch thumb to index on one hand for a spark and a zap. Pick a color theme anytime from the dock below.</p>
+            <button class="start-btn" id="startBtn">Enter Experience</button>
+        </div>
     </div>
 
     <div class="video-container">
@@ -38,6 +68,7 @@
         <div class="panel">
             <div class="stat">Gesture: <span class="val" id="ui-gesture">None</span></div>
             <div class="stat">Spread: <span class="val" id="ui-spread">0%</span></div>
+            <div class="stat">Fingers Open: <span class="val" id="ui-open">0</span></div>
         </div>
     </div>
 
