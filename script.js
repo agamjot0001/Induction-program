@@ -31,12 +31,31 @@ const themes = {
 // Physics Engines Data
 let particles = [];
 let ripples = [];
-// We now only track the thumb tip (4) and index tip (8) on each hand
-const TRACK_POINTS = [4, 8];
 
-// Orders 4 points around their centroid so a quadrilateral connecting them
-// doesn't self-intersect (bowtie shape)
-function orderPointsForQuad(pts) {
+// Landmark indices for each finger's tip / pip(-equivalent) / mcp joints.
+// Used to test whether a finger is open (extended) or closed (curled).
+const FINGERS = [
+    { name: 'thumb',  tip: 4,  pip: 3,  mcp: 2  },
+    { name: 'index',  tip: 8,  pip: 6,  mcp: 5  },
+    { name: 'middle', tip: 12, pip: 10, mcp: 9  },
+    { name: 'ring',   tip: 16, pip: 14, mcp: 13 },
+    { name: 'pinky',  tip: 20, pip: 18, mcp: 17 }
+];
+// A finger counts as "open" when its tip sits meaningfully farther from the
+// wrist than its pip joint does. This is rotation-independent, so it still
+// works no matter how the hand is angled toward the camera.
+const EXTEND_RATIO = 1.15;
+
+function isFingerExtended(hand, finger) {
+    const wrist = hand[0];
+    const tipDist = getDist(wrist, hand[finger.tip]);
+    const pipDist = getDist(wrist, hand[finger.pip]);
+    return tipDist > pipDist * EXTEND_RATIO;
+}
+
+// Orders any number (>=3) of points around their shared centroid so a
+// polygon connecting them doesn't self-intersect
+function orderPointsAroundCentroid(pts) {
     const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
     const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
     return pts.slice().sort((a, b) =>
@@ -44,9 +63,10 @@ function orderPointsForQuad(pts) {
     );
 }
 
-// Fills a quadrilateral (array of 4 ordered points) with a shifting,
-// multi-colored gradient and a glowing outline
-function drawQuadFill(pts) {
+// Fills the polygon formed by every currently-open fingertip with a shifting
+// color gradient, then adds a frosted, black-and-white "glass" sheen that
+// drifts across it, on top of a glowing outline.
+function drawPolygonFill(pts) {
     ctx.save();
     ctx.beginPath();
     ctx.moveTo(pts[0].x, pts[0].y);
@@ -57,26 +77,91 @@ function drawQuadFill(pts) {
     const ys = pts.map(p => p.y);
     const minX = Math.min(...xs), maxX = Math.max(...xs);
     const minY = Math.min(...ys), maxY = Math.max(...ys);
+    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+    const diag = Math.max(Math.hypot(maxX - minX, maxY - minY), 40);
 
-    const grad = ctx.createLinearGradient(minX, minY, maxX, maxY);
-    const stops = 5;
+    // 1. Colorful animated base fill
+    const colorGrad = ctx.createLinearGradient(minX, minY, maxX, maxY);
+    const stops = Math.max(pts.length, 4);
     for (let i = 0; i <= stops; i++) {
-        grad.addColorStop(i / stops, themes[currentTheme](time * 0.6 + i * 0.35, i, stops + 1));
+        colorGrad.addColorStop(i / stops, themes[currentTheme](time * 0.6 + i * 0.3, i, stops + 1));
     }
-
-    ctx.fillStyle = grad;
-    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = colorGrad;
+    ctx.globalAlpha = 0.5;
     ctx.shadowBlur = 25;
     ctx.shadowColor = themes[currentTheme](time, 0, 1);
     ctx.fill();
+    ctx.shadowBlur = 0;
 
+    // 2. Frosted glass black & white sheen, clipped to the same polygon,
+    //    drifting like a light source orbiting the shape
+    ctx.save();
+    ctx.clip();
+    const lightX = cx + Math.cos(time * 0.6) * diag * 0.3;
+    const lightY = cy + Math.sin(time * 0.6) * diag * 0.3;
+    const sheen = ctx.createRadialGradient(lightX, lightY, 0, lightX, lightY, diag * 0.65);
+    sheen.addColorStop(0, 'rgba(255,255,255,0.65)');
+    sheen.addColorStop(0.4, 'rgba(255,255,255,0.08)');
+    sheen.addColorStop(1, 'rgba(0,0,0,0.4)');
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = sheen;
+    ctx.fillRect(minX - 20, minY - 20, (maxX - minX) + 40, (maxY - minY) + 40);
+    ctx.restore();
+
+    // 3. Glowing outline
     ctx.globalAlpha = 1;
-    ctx.lineWidth = 3;
-    ctx.strokeStyle = themes[currentTheme](time, 2, 4);
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = 'rgba(255,255,255,0.55)';
     ctx.shadowBlur = 15;
+    ctx.shadowColor = themes[currentTheme](time, 2, 4);
     ctx.stroke();
     ctx.restore();
+
+    drawPerimeterPulse(pts);
 }
+
+// Cool effect: a couple of bright energy pulses continuously race around the
+// polygon's perimeter, like current tracing a circuit
+function drawPerimeterPulse(pts) {
+    const n = pts.length;
+    if (n < 3) return;
+
+    const edges = [];
+    let total = 0;
+    for (let i = 0; i < n; i++) {
+        const a = pts[i], b = pts[(i + 1) % n];
+        const len = getDist(a, b);
+        edges.push({ a, b, len });
+        total += len;
+    }
+    if (total === 0) return;
+
+    const pulseCount = 2;
+    for (let p = 0; p < pulseCount; p++) {
+        const t = ((time * 0.15) + p / pulseCount) % 1;
+        let dist = t * total;
+        for (const e of edges) {
+            if (dist <= e.len) {
+                const frac = e.len === 0 ? 0 : dist / e.len;
+                const x = e.a.x + (e.b.x - e.a.x) * frac;
+                const y = e.a.y + (e.b.y - e.a.y) * frac;
+                const col = themes[currentTheme](time + p, p, pulseCount + 1);
+                ctx.beginPath();
+                ctx.arc(x, y, 5, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = col;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+                break;
+            }
+            dist -= e.len;
+        }
+    }
+}
+
 
 // Matrix Background
 let matrixColumns = [];
@@ -93,6 +178,7 @@ const uiHands = document.getElementById('ui-hands');
 const uiFps = document.getElementById('ui-fps');
 const uiGesture = document.getElementById('ui-gesture');
 const uiSpread = document.getElementById('ui-spread');
+const uiOpen = document.getElementById('ui-open');
 
 /**
  * INITIALIZATION
@@ -381,54 +467,62 @@ function renderLoop(timestamp) {
     // Process Hand Logic if present
     if (currentHands.length > 0) {
 
-        // 1. Draw thumb + index points (and the line between them) per hand
+        // 1. Per hand: find which fingers are OPEN, draw glowing markers +
+        //    a connecting trace only across those, and collect their tips
+        let allOpenPts = [];
+        let totalOpenCount = 0;
+
         currentHands.forEach((hand, handIndex) => {
             const glowColor = themes[currentTheme](time, handIndex, 2);
-            const thumbPt = mapToCanvas(hand[4]);
-            const indexPt = mapToCanvas(hand[8]);
 
-            // Connect thumb to index on the same hand
-            ctx.beginPath();
-            ctx.moveTo(thumbPt.x, thumbPt.y);
-            ctx.lineTo(indexPt.x, indexPt.y);
-            ctx.strokeStyle = glowColor;
-            ctx.lineWidth = 2;
-            ctx.shadowBlur = 12;
-            ctx.shadowColor = glowColor;
-            ctx.stroke();
+            const openFingers = FINGERS.filter(f => isFingerExtended(hand, f));
+            const openPts = openFingers.map(f => mapToCanvas(hand[f.tip]));
+            totalOpenCount += openPts.length;
 
-            // Draw glowing markers at thumb & index tips, spawning sparks
+            // Trace a line across this hand's open fingertips (anatomical order)
+            if (openPts.length > 1) {
+                ctx.beginPath();
+                ctx.moveTo(openPts[0].x, openPts[0].y);
+                for (let i = 1; i < openPts.length; i++) ctx.lineTo(openPts[i].x, openPts[i].y);
+                ctx.strokeStyle = glowColor;
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 12;
+                ctx.shadowColor = glowColor;
+                ctx.stroke();
+            }
+
+            // Glowing markers + sparks only on open fingertips; closed
+            // fingers are ignored entirely, as if invisible to the sensor
             ctx.shadowBlur = 15;
             ctx.shadowColor = glowColor;
-            [thumbPt, indexPt].forEach((pt, idx) => {
-                const tipCol = themes[currentTheme](time, idx, 2);
+            openPts.forEach((pt, idx) => {
+                const tipCol = themes[currentTheme](time, idx, Math.max(openPts.length, 1));
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
                 ctx.fillStyle = '#fff';
                 ctx.fill();
 
-                if (Math.random() > 0.5) {
+                if (Math.random() > 0.55) {
                     createParticles(pt, tipCol, 1);
                 }
             });
             ctx.shadowBlur = 0; // Reset
+
+            allOpenPts = allOpenPts.concat(openPts);
         });
 
-        // 2. Cross-Hand Quadrilateral: connect both thumbs + both indexes
-        //    into a 4-point shape filled with shifting colors
-        if (currentHands.length >= 2) {
-            const h1 = currentHands[0];
-            const h2 = currentHands[1];
+        if (uiOpen) uiOpen.innerText = totalOpenCount;
 
-            const rawPts = [
-                mapToCanvas(h1[4]), mapToCanvas(h1[8]),
-                mapToCanvas(h2[4]), mapToCanvas(h2[8])
-            ];
-            const orderedPts = orderPointsForQuad(rawPts);
+        // 2. Combine every open fingertip across both hands into one
+        //    shape, filled with color + a black-and-white glass sheen,
+        //    and traced by traveling energy pulses. Needs 3+ open fingers
+        //    to form a shape at all — it grows and shrinks live as fingers
+        //    open and close.
+        if (allOpenPts.length >= 3) {
+            const orderedPts = orderPointsAroundCentroid(allOpenPts);
+            drawPolygonFill(orderedPts);
 
-            drawQuadFill(orderedPts);
-
-            // Occasional ambient sparks along the quad's corners
+            // Occasional ambient sparks along the shape's corners
             if (Math.random() > 0.7) {
                 const randPt = orderedPts[Math.floor(Math.random() * orderedPts.length)];
                 createParticles(randPt, themes[currentTheme](time, 1, 1), 1);
@@ -437,6 +531,7 @@ function renderLoop(timestamp) {
 
         detectGestures();
     }
+
 
     ctx.globalCompositeOperation = 'source-over'; // Restore
 }
